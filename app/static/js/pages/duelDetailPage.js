@@ -16,6 +16,7 @@ import {
 import { t, translateApiMessage } from "../i18n/index.js";
 import { renderComplianceSummary, renderLimitBadge } from "../components/limitBadge.js";
 import { mountOcrReview } from "../components/ocrReview.js";
+import { mountWeeklyDiffPanel } from "../components/weeklyDiffPanel.js";
 
 const DUEL_STATUS_CLASSES = {
   ongoing: "badge-info",
@@ -33,6 +34,7 @@ function getDuelStatusMeta(status) {
 export function renderDuelDetailPage(container, { duelId, onNavigate }) {
   let feedback = { error: false, text: "" };
   let activeExtraction = null;
+  let showWeeklyDiff = false;
   let selectedDateFilter = "";
   let showEditDuel = false;
   let confirmDeleteDuel = false;
@@ -156,6 +158,16 @@ export function renderDuelDetailPage(container, { duelId, onNavigate }) {
                 s.source === "ocr"
                   ? `<span class="badge badge-info">${escapeHtml(t("duelDetail.sourceOcr"))}</span>`
                   : `<span class="badge badge-muted">${escapeHtml(t("duelDetail.sourceManual"))}</span>`;
+              const diffBadge =
+                s.calculationMeta?.method === "weekly_diff"
+                  ? `<span class="badge badge-gold" title="${escapeHtml(
+                      t("weeklyDiff.badgeTooltip", {
+                        weekly: fmtNum(s.calculationMeta.weeklyTotal),
+                        today: fmtNum(s.calculationMeta.todayLiveScore),
+                        prev: fmtNum(s.calculationMeta.previousDaysSum),
+                      })
+                    )}">${escapeHtml(t("weeklyDiff.badgeLabel"))}</span>`
+                  : "";
 
               const deleteControls =
                 confirmDeleteScoreId === s.id
@@ -170,7 +182,7 @@ export function renderDuelDetailPage(container, { duelId, onNavigate }) {
                   <td>${escapeHtml(fmtDate(s.score_date))}</td>
                   <td>${nameCell}</td>
                   <td>${scoreCell}</td>
-                  <td>${sourceBadge}</td>
+                  <td><div class="action-row">${sourceBadge}${diffBadge}</div></td>
                   <td>${renderLimitBadge(s)}</td>
                   <td>
                     <div class="action-row">
@@ -398,7 +410,14 @@ export function renderDuelDetailPage(container, { duelId, onNavigate }) {
           ${escapeHtml(t("duelDetail.ocrLoading"))}
         </div>
         <div class="alert alert-error hidden" role="alert" data-testid="ocr-upload-error" style="margin-top: 0.75rem;"></div>
+        <div style="margin-top: 0.9rem; padding-top: 0.85rem; border-top: 1px solid var(--border); display: flex; justify-content: flex-start;">
+          <button type="button" class="btn btn-secondary" data-testid="toggle-weekly-diff-btn">
+            ${escapeHtml(t("weeklyDiff.toggleBtn"))}
+          </button>
+        </div>
       </section>
+
+      <div data-testid="weekly-diff-mount"></div>
 
       <div data-testid="ocr-review-mount"></div>
 
@@ -518,6 +537,47 @@ export function renderDuelDetailPage(container, { duelId, onNavigate }) {
         },
       });
     }
+
+    // Mount Weekly Total -> Daily Diff panel
+    const toggleWeeklyBtn = container.querySelector('[data-testid="toggle-weekly-diff-btn"]');
+    const weeklyMount = container.querySelector('[data-testid="weekly-diff-mount"]');
+    function renderWeeklyMount() {
+      if (!weeklyMount) return;
+      if (!showWeeklyDiff) {
+        weeklyMount.innerHTML = "";
+        return;
+      }
+      mountWeeklyDiffPanel(weeklyMount, {
+        duelId,
+        duel,
+        players,
+        recordedDates: detail.recordedDates || [],
+        onCommitted: async (res) => {
+          showWeeklyDiff = false;
+          const count = Array.isArray(res.savedScores) ? res.savedScores.length : 0;
+          const todayCnt = Number(res.savedTodayCount || 0);
+          feedback = {
+            error: false,
+            text:
+              todayCnt > 0
+                ? t("weeklyDiff.msgCommittedWithToday", { count, todayCount: todayCnt })
+                : t("weeklyDiff.msgCommitted", { count }),
+          };
+          await load();
+        },
+        onCancel: () => {
+          showWeeklyDiff = false;
+          weeklyMount.innerHTML = "";
+        },
+      });
+    }
+    if (toggleWeeklyBtn) {
+      toggleWeeklyBtn.addEventListener("click", () => {
+        showWeeklyDiff = !showWeeklyDiff;
+        renderWeeklyMount();
+      });
+    }
+    renderWeeklyMount();
 
     // Duel edit / delete
     const toggleEditBtn = container.querySelector('[data-testid="toggle-edit-duel-btn"]');

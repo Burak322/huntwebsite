@@ -134,6 +134,7 @@ CREATE TABLE IF NOT EXISTS duel_scores (
     score_date TEXT NOT NULL,
     screenshot_id INTEGER REFERENCES duel_screenshots(id) ON DELETE SET NULL,
     source TEXT NOT NULL DEFAULT 'ocr' CHECK (source IN ('ocr', 'manual')),
+    calculation_meta_json TEXT,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
@@ -164,6 +165,15 @@ def _ensure_player_rank_tower_columns(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_players_tower_level ON players(tower_level)")
 
 
+def _ensure_duel_score_meta_column(conn: sqlite3.Connection) -> None:
+    cols = {
+        str(row[1])
+        for row in conn.execute("PRAGMA table_info(duel_scores)").fetchall()
+    }
+    if "calculation_meta_json" not in cols:
+        conn.execute("ALTER TABLE duel_scores ADD COLUMN calculation_meta_json TEXT")
+
+
 def run_migrations(
     conn: sqlite3.Connection,
     settings: Settings | None = None,
@@ -172,6 +182,7 @@ def run_migrations(
     conn.execute("PRAGMA foreign_keys = ON")
     conn.executescript(SCHEMA_SQL)
     _ensure_player_rank_tower_columns(conn)
+    _ensure_duel_score_meta_column(conn)
 
     # Idempotent default settings seed
     conn.execute(

@@ -8,6 +8,20 @@ const AUTH_EXEMPT_401_PATHS = new Set([
 ]);
 
 let unauthorizedHandler = null;
+let staticModPromise = null;
+
+export function isStaticMode() {
+  if (typeof document === "undefined") return false;
+  const meta = document.querySelector('meta[name="clan-static-mode"]');
+  return meta?.getAttribute("content") === "true";
+}
+
+function getStaticBackend() {
+  if (!staticModPromise) {
+    staticModPromise = import("./staticBackend.js");
+  }
+  return staticModPromise;
+}
 
 export class ApiError extends Error {
   constructor(status, message, data = null) {
@@ -88,40 +102,49 @@ export async function request(path, options = {}) {
   return data;
 }
 
-export function getAuthStatus() {
+export async function getAuthStatus() {
+  if (isStaticMode()) return (await getStaticBackend()).getAuthStatus();
   return request("/api/auth/status", { method: "GET" });
 }
 
-export function setupAdmin({ username, password, clanName }) {
+export async function setupAdmin({ username, password, clanName }) {
+  if (isStaticMode()) return (await getStaticBackend()).setupAdmin({ username, password, clanName });
   return request("/api/auth/setup", {
     method: "POST",
     body: { username, password, clanName },
   });
 }
 
-export function loginAdmin({ username, password }) {
+export async function loginAdmin({ username, password }) {
+  if (isStaticMode()) return (await getStaticBackend()).loginAdmin({ username, password });
   return request("/api/auth/login", {
     method: "POST",
     body: { username, password },
   });
 }
 
-export function logoutAdmin() {
+export async function logoutAdmin() {
+  if (isStaticMode()) return (await getStaticBackend()).logoutAdmin();
   return request("/api/auth/logout", { method: "POST" });
 }
 
-export function getMe() {
+export async function getMe() {
+  if (isStaticMode()) return (await getStaticBackend()).getMe();
   return request("/api/auth/me", { method: "GET" });
 }
 
-export function changePassword({ currentPassword, newPassword }) {
+export async function changePassword({ currentPassword, newPassword }) {
+  if (isStaticMode()) {
+    return (await getStaticBackend()).changePassword({ currentPassword, newPassword });
+  }
   return request("/api/auth/change-password", {
     method: "POST",
     body: { currentPassword, newPassword },
   });
 }
 
-export function updateClanName(clanName) {
+export async function updateClanName(clanName) {
+  if (isStaticMode()) return (await getStaticBackend()).updateClanName(clanName);
   return request("/api/settings/clan", {
     method: "PUT",
     body: { clanName },
@@ -199,55 +222,155 @@ const qs = (params) => {
 };
 
 // ---------------------------------------------------------------- fields
-export const listFields = (params = {}) => request(`/api/fields${qs(params)}`);
-export const createField = (body) => request("/api/fields", { method: "POST", body });
-export const updateField = (id, body) => request(`/api/fields/${id}`, { method: "PATCH", body });
-export const deleteField = (id) => request(`/api/fields/${id}`, { method: "DELETE" });
+export async function listFields(params = {}) {
+  if (isStaticMode()) return (await getStaticBackend()).listFields(params);
+  return request(`/api/fields${qs(params)}`);
+}
+export async function createField(body) {
+  if (isStaticMode()) return (await getStaticBackend()).createField(body);
+  return request("/api/fields", { method: "POST", body });
+}
+export async function updateField(id, body) {
+  if (isStaticMode()) return (await getStaticBackend()).updateField(id, body);
+  return request(`/api/fields/${id}`, { method: "PATCH", body });
+}
+export async function deleteField(id) {
+  if (isStaticMode()) return (await getStaticBackend()).deleteField(id);
+  return request(`/api/fields/${id}`, { method: "DELETE" });
+}
 
 // ---------------------------------------------------------------- players
-export const listPlayers = (params = {}) => request(`/api/players${qs(params)}`);
-export const createPlayer = (body) => request("/api/players", { method: "POST", body });
-export const getPlayer = (id) => request(`/api/players/${id}`);
-export const updatePlayer = (id, body) => request(`/api/players/${id}`, { method: "PATCH", body });
-export const deletePlayer = (id) => request(`/api/players/${id}`, { method: "DELETE" });
-export const addAlias = (id, alias_name) =>
-  request(`/api/players/${id}/aliases`, { method: "POST", body: { alias_name } });
-export const deleteAlias = (id, aliasId) =>
-  request(`/api/players/${id}/aliases/${aliasId}`, { method: "DELETE" });
-export function extractPlayersFromPhoto(file) {
+export async function listPlayers(params = {}) {
+  if (isStaticMode()) return (await getStaticBackend()).listPlayers(params);
+  return request(`/api/players${qs(params)}`);
+}
+export async function createPlayer(body) {
+  if (isStaticMode()) return (await getStaticBackend()).createPlayer(body);
+  return request("/api/players", { method: "POST", body });
+}
+export async function getPlayer(id) {
+  if (isStaticMode()) return (await getStaticBackend()).getPlayer(id);
+  return request(`/api/players/${id}`);
+}
+export async function updatePlayer(id, body) {
+  if (isStaticMode()) return (await getStaticBackend()).updatePlayer(id, body);
+  return request(`/api/players/${id}`, { method: "PATCH", body });
+}
+export async function deletePlayer(id) {
+  if (isStaticMode()) return (await getStaticBackend()).deletePlayer(id);
+  return request(`/api/players/${id}`, { method: "DELETE" });
+}
+export async function addAlias(id, alias_name) {
+  if (isStaticMode()) return (await getStaticBackend()).addAlias(id, alias_name);
+  return request(`/api/players/${id}/aliases`, { method: "POST", body: { alias_name } });
+}
+export async function deleteAlias(id, aliasId) {
+  if (isStaticMode()) return (await getStaticBackend()).deleteAlias(id, aliasId);
+  return request(`/api/players/${id}/aliases/${aliasId}`, { method: "DELETE" });
+}
+export async function extractPlayersFromPhoto(file) {
+  if (isStaticMode()) return (await getStaticBackend()).extractPlayersFromPhoto(file);
   const fd = new FormData();
   fd.append("file", file);
   return request("/api/players/import-ocr", { method: "POST", body: fd });
 }
-export const bulkImportPlayers = (body) =>
-  request("/api/players/import-bulk", { method: "POST", body });
-export const createProgression = (id, body) =>
-  request(`/api/players/${id}/progression`, { method: "POST", body });
-export const updateProgression = (entryId, body) =>
-  request(`/api/progression/${entryId}`, { method: "PATCH", body });
-export const deleteProgression = (entryId) => request(`/api/progression/${entryId}`, { method: "DELETE" });
+export async function bulkImportPlayers(body) {
+  if (isStaticMode()) return (await getStaticBackend()).bulkImportPlayers(body);
+  return request("/api/players/import-bulk", { method: "POST", body });
+}
+export async function createProgression(id, body) {
+  if (isStaticMode()) return (await getStaticBackend()).createProgression(id, body);
+  return request(`/api/players/${id}/progression`, { method: "POST", body });
+}
+export async function updateProgression(entryId, body) {
+  if (isStaticMode()) return (await getStaticBackend()).updateProgression(entryId, body);
+  return request(`/api/progression/${entryId}`, { method: "PATCH", body });
+}
+export async function deleteProgression(entryId) {
+  if (isStaticMode()) return (await getStaticBackend()).deleteProgression(entryId);
+  return request(`/api/progression/${entryId}`, { method: "DELETE" });
+}
 
 // ---------------------------------------------------------------- duels
-export const getDashboard = () => request("/api/dashboard");
-export const listDuels = () => request("/api/duels");
-export const createDuel = (body) => request("/api/duels", { method: "POST", body });
-export const getDuel = (id) => request(`/api/duels/${id}`);
-export const updateDuel = (id, body) => request(`/api/duels/${id}`, { method: "PATCH", body });
-export const deleteDuel = (id) => request(`/api/duels/${id}`, { method: "DELETE" });
-export function extractScreenshot(duelId, file, scoreDate) {
+export async function getDashboard() {
+  if (isStaticMode()) return (await getStaticBackend()).getDashboard();
+  return request("/api/dashboard");
+}
+export async function listDuels() {
+  if (isStaticMode()) return (await getStaticBackend()).listDuels();
+  return request("/api/duels");
+}
+export async function createDuel(body) {
+  if (isStaticMode()) return (await getStaticBackend()).createDuel(body);
+  return request("/api/duels", { method: "POST", body });
+}
+export async function getDuel(id) {
+  if (isStaticMode()) return (await getStaticBackend()).getDuel(id);
+  return request(`/api/duels/${id}`);
+}
+export async function updateDuel(id, body) {
+  if (isStaticMode()) return (await getStaticBackend()).updateDuel(id, body);
+  return request(`/api/duels/${id}`, { method: "PATCH", body });
+}
+export async function deleteDuel(id) {
+  if (isStaticMode()) return (await getStaticBackend()).deleteDuel(id);
+  return request(`/api/duels/${id}`, { method: "DELETE" });
+}
+export async function extractScreenshot(duelId, file, scoreDate) {
+  if (isStaticMode()) return (await getStaticBackend()).extractScreenshot(duelId, file, scoreDate);
   const fd = new FormData();
   fd.append("file", file);
   fd.append("score_date", scoreDate);
   return request(`/api/duels/${duelId}/screenshots/extract`, { method: "POST", body: fd });
 }
-export const commitScreenshot = (duelId, screenshotId, body) =>
-  request(`/api/duels/${duelId}/screenshots/${screenshotId}/commit`, { method: "POST", body });
-export const addScore = (duelId, body) => request(`/api/duels/${duelId}/scores`, { method: "POST", body });
-export const updateScore = (id, body) => request(`/api/scores/${id}`, { method: "PATCH", body });
-export const deleteScore = (id) => request(`/api/scores/${id}`, { method: "DELETE" });
+export async function commitScreenshot(duelId, screenshotId, body) {
+  if (isStaticMode()) {
+    return (await getStaticBackend()).commitScreenshot(duelId, screenshotId, body);
+  }
+  return request(`/api/duels/${duelId}/screenshots/${screenshotId}/commit`, { method: "POST", body });
+}
+export async function previewWeeklyDiff(duelId, formData) {
+  if (isStaticMode()) return (await getStaticBackend()).previewWeeklyDiff(duelId, formData);
+  return request(`/api/duels/${duelId}/weekly-diff/preview`, { method: "POST", body: formData });
+}
+export async function commitWeeklyDiff(duelId, body) {
+  if (isStaticMode()) return (await getStaticBackend()).commitWeeklyDiff(duelId, body);
+  return request(`/api/duels/${duelId}/weekly-diff/commit`, { method: "POST", body });
+}
+export async function addScore(duelId, body) {
+  if (isStaticMode()) return (await getStaticBackend()).addScore(duelId, body);
+  return request(`/api/duels/${duelId}/scores`, { method: "POST", body });
+}
+export async function updateScore(id, body) {
+  if (isStaticMode()) return (await getStaticBackend()).updateScore(id, body);
+  return request(`/api/scores/${id}`, { method: "PATCH", body });
+}
+export async function deleteScore(id) {
+  if (isStaticMode()) return (await getStaticBackend()).deleteScore(id);
+  return request(`/api/scores/${id}`, { method: "DELETE" });
+}
 
 // ---------------------------------------------------------------- limits
-export const getDailyLimit = () => request("/api/limits/daily");
-export const setDailyLimit = (minScore, note) =>
-  request("/api/limits/daily", { method: "PUT", body: { minScore, note: note || null } });
-export const evaluateLimits = (params = {}) => request(`/api/limits/evaluate${qs(params)}`);
+export async function getDailyLimit() {
+  if (isStaticMode()) return (await getStaticBackend()).getDailyLimit();
+  return request("/api/limits/daily");
+}
+export async function setDailyLimit(minScore, note) {
+  if (isStaticMode()) return (await getStaticBackend()).setDailyLimit(minScore, note);
+  return request("/api/limits/daily", { method: "PUT", body: { minScore, note: note || null } });
+}
+export async function evaluateLimits(params = {}) {
+  if (isStaticMode()) return (await getStaticBackend()).evaluateLimits(params);
+  return request(`/api/limits/evaluate${qs(params)}`);
+}
+
+// ---------------------------------------------------------------- static backup
+export async function exportStaticBackup() {
+  return (await getStaticBackend()).exportBackupJson();
+}
+export async function importStaticBackup(rawText) {
+  return (await getStaticBackend()).importBackupJson(rawText);
+}
+export async function resetStaticData() {
+  return (await getStaticBackend()).resetToSeed();
+}

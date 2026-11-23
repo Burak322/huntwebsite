@@ -1,4 +1,10 @@
-import { escapeHtml, getAuthStatus, logoutAdmin, setUnauthorizedHandler } from "./api.js";
+import {
+  escapeHtml,
+  getAuthStatus,
+  isStaticMode,
+  logoutAdmin,
+  setUnauthorizedHandler,
+} from "./api.js";
 import {
   applyDocumentLocale,
   getLanguage,
@@ -34,6 +40,37 @@ function normalizePath(pathname) {
   return pathname.endsWith("/") ? pathname.slice(0, -1) : pathname;
 }
 
+function getCurrentPath() {
+  if (isStaticMode()) {
+    const rawHash = window.location.hash || "";
+    const stripped = rawHash.startsWith("#") ? rawHash.slice(1) : rawHash;
+    return normalizePath(stripped.startsWith("/") ? stripped : `/${stripped}`);
+  }
+  return normalizePath(window.location.pathname);
+}
+
+function setRoutePath(targetPath, { replace = false } = {}) {
+  const normalized = normalizePath(targetPath);
+  if (isStaticMode()) {
+    const targetHash = `#${normalized}`;
+    if (window.location.hash !== targetHash) {
+      if (replace) {
+        window.history.replaceState({}, "", targetHash);
+      } else {
+        window.location.hash = targetHash;
+      }
+    }
+    return;
+  }
+  if (normalizePath(window.location.pathname) !== normalized) {
+    if (replace) {
+      window.history.replaceState({}, "", normalized);
+    } else {
+      window.history.pushState({}, "", normalized);
+    }
+  }
+}
+
 function renderPlaceholderSection(container, { title, description }) {
   container.innerHTML = `
     <div class="page-header">
@@ -63,14 +100,7 @@ function renderBootError() {
 }
 
 export function navigate(targetPath, { replace = false } = {}) {
-  const normalized = normalizePath(targetPath);
-  if (normalizePath(window.location.pathname) !== normalized) {
-    if (replace) {
-      window.history.replaceState({}, "", normalized);
-    } else {
-      window.history.pushState({}, "", normalized);
-    }
-  }
+  setRoutePath(targetPath, { replace });
   renderRoute();
 }
 
@@ -89,11 +119,11 @@ async function handleLogout() {
 }
 
 function renderRoute() {
-  const path = normalizePath(window.location.pathname);
+  const path = getCurrentPath();
 
   if (authState.needsSetup) {
     if (path !== "/setup") {
-      window.history.replaceState({}, "", "/setup");
+      setRoutePath("/setup", { replace: true });
     }
     renderSetupPage(appRoot, {
       authState,
@@ -112,7 +142,7 @@ function renderRoute() {
 
   if (!authState.authenticated) {
     if (path !== "/login") {
-      window.history.replaceState({}, "", "/login");
+      setRoutePath("/login", { replace: true });
     }
     renderLoginPage(appRoot, {
       authState,
@@ -130,7 +160,7 @@ function renderRoute() {
   }
 
   if (path === "/setup" || path === "/login") {
-    window.history.replaceState({}, "", "/");
+    setRoutePath("/", { replace: true });
     renderAuthenticatedView("/");
     return;
   }
@@ -226,6 +256,11 @@ async function boot() {
   window.addEventListener("popstate", () => {
     renderRoute();
   });
+  if (isStaticMode()) {
+    window.addEventListener("hashchange", () => {
+      renderRoute();
+    });
+  }
 
   try {
     authState = await getAuthStatus();

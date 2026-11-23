@@ -673,3 +673,93 @@ def test_language_switching_en_ar_rtl_it_and_persistence(
     expect(authed_page.get_by_role("heading", name="تسجيل دخول المشرف")).to_be_visible()
 
     assert pageerrors == [], f"Unexpected browser page errors: {pageerrors}"
+
+
+@pytest.mark.tier1
+@pytest.mark.tier3
+def test_weekly_diff_midweek_ocr_reconciliation_and_commit(
+    authed_page: Page, live_server: ServerHandle, tmp_path: Path
+) -> None:
+    """Derive Wednesday scores from Thursday Weekly + Today PNG screenshots minus Mon+Tue DB sums."""
+    base = live_server.base_url
+    assert authed_page.request.put(f"{base}/api/limits/daily", data={"minScore": 4000}).status == 200
+
+    p1 = authed_page.request.post(
+        f"{base}/api/players", data={"display_name": "DemirKurt", "status": "active"}
+    ).json()["player"]
+    p2 = authed_page.request.post(
+        f"{base}/api/players", data={"display_name": "KurtBey", "status": "active"}
+    ).json()["player"]
+
+    duel = authed_page.request.post(
+        f"{base}/api/duels",
+        data={"opponent_clan_name": "Gölge Klan", "start_date": "2026-11-23"},
+    ).json()["duel"]
+    duel_id = duel["id"]
+
+    # Mon (23) + Tue (24)
+    for pid, mon, tue in ((p1["id"], 2000, 3000), (p2["id"], 1000, 1500)):
+        assert authed_page.request.post(
+            f"{base}/api/duels/{duel_id}/scores",
+            data={"player_id": pid, "score": mon, "score_date": "2026-11-23"},
+        ).status == 201
+        assert authed_page.request.post(
+            f"{base}/api/duels/{duel_id}/scores",
+            data={"player_id": pid, "score": tue, "score_date": "2026-11-24"},
+        ).status == 201
+
+    weekly_png = tmp_path / "weekly_thu.png"
+    today_png = tmp_path / "today_thu.png"
+    generate_leaderboard_image(
+        weekly_png,
+        rows=[
+            LeaderboardRowSpec(rank=1, name="DemirKurt", score="11,500"),
+            LeaderboardRowSpec(rank=2, name="KurtBey", score="6,000"),
+        ],
+        theme="dark",
+        headers=["Sıra", "Oyuncu", "Puan"],
+    )
+    generate_leaderboard_image(
+        today_png,
+        rows=[
+            LeaderboardRowSpec(rank=1, name="DemirKurt", score="1,500"),
+            LeaderboardRowSpec(rank=2, name="KurtBey", score="500"),
+        ],
+        theme="dark",
+        headers=["Sıra", "Oyuncu", "Puan"],
+    )
+
+    navigate_and_wait(authed_page, f"{base}/duels/{duel_id}", wait_for_text="Gölge Klan")
+    authed_page.locator('[data-testid="toggle-weekly-diff-btn"]').click()
+
+    panel = authed_page.locator('[data-testid="weekly-diff-panel"]')
+    expect(panel).to_be_visible()
+    panel.locator("#wd-target-date").fill("2026-11-25")
+    panel.locator("#wd-today-date").fill("2026-11-26")
+    panel.locator('[data-testid="wd-weekly-files"]').set_input_files(str(weekly_png))
+    panel.locator('[data-testid="wd-today-files"]').set_input_files(str(today_png))
+    panel.locator('[data-testid="wd-preview-ocr-btn"]').click()
+
+    tbody = panel.locator('[data-testid="wd-review-tbody"]')
+    expect(tbody.locator("tr")).to_have_count(2, timeout=25_000)
+
+    # Verify derived scores: DemirKurt = 11500 - 1500 - 5000 = 5000; KurtBey = 6000 - 500 - 2500 = 3000
+    derived_vals = [
+        tbody.locator("tr").nth(i).locator('input[data-col="derivedScore"]').input_value()
+        for i in range(2)
+    ]
+    assert set(derived_vals) == {"5000", "3000"}
+
+    panel.locator('[data-testid="wd-commit-btn"]').click()
+    expect(panel).to_have_count(0, timeout=15_000)
+
+    authed_page.locator('[data-testid="summary-date-filter"]').select_option("2026-11-25")
+    summaries = authed_page.locator('[data-testid="duel-summaries-table"]')
+    expect(summaries).to_contain_text("5.000")
+    expect(summaries).to_contain_text("3.000")
+    expect(summaries.locator('[data-limit-status="met"]')).to_have_count(1)
+    expect(summaries.locator('[data-limit-status="missed"]')).to_have_count(1)
+
+    authed_page.reload(wait_until="load")
+    raw_table = authed_page.locator('[data-testid="duel-raw-scores-table"]')
+    expect(raw_table).to_contain_text("Haftalık Fark")

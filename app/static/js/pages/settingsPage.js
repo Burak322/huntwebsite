@@ -3,10 +3,14 @@ import {
   createField,
   deleteField,
   escapeHtml,
+  exportStaticBackup,
   fmtDateTime,
   fmtNum,
   getDailyLimit,
+  importStaticBackup,
+  isStaticMode,
   listFields,
+  resetStaticData,
   setDailyLimit,
   updateClanName,
   updateField,
@@ -29,7 +33,9 @@ export function renderSettingsPage(container, { authState, onClanNameChange }) {
   let fieldsFeedback = { error: false, text: "" };
   let clanFeedback = { error: false, text: "" };
   let passwordFeedback = { error: false, text: "" };
+  let backupFeedback = { error: false, text: "" };
   let confirmDeleteFieldId = null;
+  let confirmResetSeed = false;
 
   async function load() {
     container.setAttribute("aria-busy", "true");
@@ -354,6 +360,60 @@ export function renderSettingsPage(container, { authState, onClanNameChange }) {
           </form>
         </section>
       </div>
+
+      ${
+        isStaticMode()
+          ? `
+            <section class="card section-card" data-testid="settings-backup-section">
+              <div class="section-head">
+                <div>
+                  <h2>${escapeHtml(t("settings.backupCardTitle"))}</h2>
+                  <p class="muted-text">${escapeHtml(t("settings.backupCardDesc"))}</p>
+                </div>
+              </div>
+              ${renderFeedback(backupFeedback)}
+              <div class="form-inline" style="margin-top: 0.9rem; align-items: flex-end; flex-wrap: wrap;">
+                <button type="button" class="btn btn-primary" data-testid="export-backup-btn">
+                  ${escapeHtml(t("settings.exportJsonBtn"))}
+                </button>
+                <form data-testid="import-backup-form" class="form-inline" style="align-items: flex-end;">
+                  <div class="form-field">
+                    <label for="import-backup-file">${escapeHtml(t("settings.importJsonLabel"))}</label>
+                    <input
+                      id="import-backup-file"
+                      type="file"
+                      accept="application/json,.json"
+                      required
+                      data-testid="import-backup-input"
+                    >
+                  </div>
+                  <button type="submit" class="btn btn-secondary" data-testid="import-backup-btn">
+                    ${escapeHtml(t("settings.importJsonBtn"))}
+                  </button>
+                </form>
+                <div class="action-row">
+                  ${
+                    confirmResetSeed
+                      ? `
+                          <button type="button" class="btn btn-danger-outline" data-testid="confirm-reset-seed-btn">
+                            ${escapeHtml(t("settings.confirmResetSeedBtn"))}
+                          </button>
+                          <button type="button" class="btn btn-secondary" data-testid="cancel-reset-seed-btn">
+                            ${escapeHtml(t("common.discard"))}
+                          </button>
+                        `
+                      : `
+                          <button type="button" class="btn btn-danger-outline" data-testid="ask-reset-seed-btn">
+                            ${escapeHtml(t("settings.resetSeedBtn"))}
+                          </button>
+                        `
+                  }
+                </div>
+              </div>
+            </section>
+          `
+          : ""
+      }
     `;
 
     wireLanguageSelect(container, '[data-testid="settings-lang-select"]');
@@ -546,6 +606,90 @@ export function renderSettingsPage(container, { authState, onClanNameChange }) {
         renderContent(limitState, fields);
       }
     });
+
+    if (isStaticMode()) {
+      const exportBtn = container.querySelector('[data-testid="export-backup-btn"]');
+      if (exportBtn) {
+        exportBtn.addEventListener("click", async () => {
+          backupFeedback = { error: false, text: "" };
+          try {
+            const jsonText = await exportStaticBackup();
+            const blob = new Blob([jsonText], { type: "application/json;charset=utf-8" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = "clan-backup.json";
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+            backupFeedback = { error: false, text: t("settings.msgExported") };
+          } catch (err) {
+            backupFeedback = { error: true, text: err.message || t("settings.errImportInvalid") };
+          }
+          renderContent(limitState, fields);
+        });
+      }
+
+      const importForm = container.querySelector('[data-testid="import-backup-form"]');
+      if (importForm) {
+        importForm.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          backupFeedback = { error: false, text: "" };
+          const input = importForm.querySelector('[data-testid="import-backup-input"]');
+          const file = input?.files?.[0];
+          if (!file) return;
+          try {
+            const text = await file.text();
+            const res = await importStaticBackup(text);
+            backupFeedback = { error: false, text: t("settings.msgImported") };
+            if (typeof onClanNameChange === "function" && res.clanName) {
+              onClanNameChange(res.clanName);
+            } else {
+              await load();
+            }
+          } catch (err) {
+            backupFeedback = { error: true, text: err.message || t("settings.errImportInvalid") };
+            renderContent(limitState, fields);
+          }
+        });
+      }
+
+      const askResetBtn = container.querySelector('[data-testid="ask-reset-seed-btn"]');
+      if (askResetBtn) {
+        askResetBtn.addEventListener("click", () => {
+          confirmResetSeed = true;
+          renderContent(limitState, fields);
+        });
+      }
+      const cancelResetBtn = container.querySelector('[data-testid="cancel-reset-seed-btn"]');
+      if (cancelResetBtn) {
+        cancelResetBtn.addEventListener("click", () => {
+          confirmResetSeed = false;
+          renderContent(limitState, fields);
+        });
+      }
+      const confirmResetBtn = container.querySelector('[data-testid="confirm-reset-seed-btn"]');
+      if (confirmResetBtn) {
+        confirmResetBtn.addEventListener("click", async () => {
+          confirmResetBtn.disabled = true;
+          try {
+            const res = await resetStaticData();
+            confirmResetSeed = false;
+            backupFeedback = { error: false, text: t("settings.msgResetDone") };
+            if (typeof onClanNameChange === "function" && res.clanName) {
+              onClanNameChange(res.clanName);
+            } else {
+              await load();
+            }
+          } catch (err) {
+            confirmResetSeed = false;
+            backupFeedback = { error: true, text: err.message || t("settings.errImportInvalid") };
+            renderContent(limitState, fields);
+          }
+        });
+      }
+    }
   }
 
   load();

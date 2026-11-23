@@ -101,11 +101,21 @@ def _row_to_duel(row: sqlite3.Row) -> dict[str, Any]:
 
 _SCORE_SELECT = """
     SELECT ds.id, ds.duel_id, ds.player_id, ds.extracted_name, ds.score, ds.score_date,
-           ds.screenshot_id, ds.source, ds.created_at, ds.updated_at,
+           ds.screenshot_id, ds.source, ds.calculation_meta_json, ds.created_at, ds.updated_at,
            p.display_name AS player_name
     FROM duel_scores ds
     LEFT JOIN players p ON p.id = ds.player_id
 """
+
+
+def _parse_calc_meta(raw: str | None) -> dict[str, Any] | None:
+    if not raw:
+        return None
+    try:
+        parsed = json.loads(raw)
+        return parsed if isinstance(parsed, dict) else None
+    except json.JSONDecodeError:
+        return None
 
 
 def _row_to_score(row: sqlite3.Row, active_limit: int) -> dict[str, Any]:
@@ -120,6 +130,7 @@ def _row_to_score(row: sqlite3.Row, active_limit: int) -> dict[str, Any]:
         "score_date": str(row["score_date"]),
         "screenshot_id": int(row["screenshot_id"]) if row["screenshot_id"] is not None else None,
         "source": str(row["source"]),
+        "calculationMeta": _parse_calc_meta(row["calculation_meta_json"]),
         "created_at": str(row["created_at"]),
         "updated_at": str(row["updated_at"]),
     }
@@ -283,7 +294,59 @@ def get_duel_detail(conn: sqlite3.Connection, duel_id: int) -> dict[str, Any]:
         "compliance": limit_evaluator.summarize_compliance(summaries),
         "scores": [_row_to_score(r, active) for r in rows],
         "screenshots": [_row_to_screenshot(s) for s in shots],
+        "recordedDates": get_duel_recorded_dates(conn, duel_id),
     }
+
+
+def get_duel_recorded_dates(conn: sqlite3.Connection, duel_id: int) -> list[dict[str, Any]]:
+    rows = conn.execute(
+        """
+        SELECT score_date, COUNT(*) AS entry_count, COALESCE(SUM(score), 0) AS total_score
+        FROM duel_scores
+        WHERE duel_id = ?
+        GROUP BY score_date
+        ORDER BY score_date ASC
+        """,
+        (duel_id,),
+    ).fetchall()
+    return [
+        {
+            "scoreDate": str(r["score_date"]),
+            "entryCount": int(r["entry_count"]),
+            "totalScore": int(r["total_score"]),
+        }
+        for r in rows
+    ]
+
+
+def get_duel_daily_sums_by_dates(
+    conn: sqlite3.Connection,
+    duel_id: int,
+    included_dates: list[str],
+) -> tuple[dict[int, int], dict[str, int]]:
+    if not included_dates:
+        return {}, {}
+    placeholders = ", ".join("?" for _ in included_dates)
+    rows = conn.execute(
+        f"""
+        SELECT player_id, extracted_name, score
+        FROM duel_scores
+        WHERE duel_id = ? AND score_date IN ({placeholders})
+        """,
+        (duel_id, *included_dates),
+    ).fetchall()
+    by_player: dict[int, int] = {}
+    by_name: dict[str, int] = {}
+    for r in rows:
+        val = int(r["score"])
+        if r["player_id"] is not None:
+            pid = int(r["player_id"])
+            by_player[pid] = by_player.get(pid, 0) + val
+        else:
+            folded = str(r["extracted_name"] or "").strip().replace("İ", "i").replace("I", "ı").casefold()
+            if folded:
+                by_name[folded] = by_name.get(folded, 0) + val
+    return by_player, by_name
 
 
 # ---------------------------------------------------------------- screenshots
@@ -369,10 +432,12 @@ def upsert_score(
     score_date: str,
     source: str,
     screenshot_id: int | None = None,
+    calculation_meta: dict[str, Any] | None = None,
     commit: bool = True,
 ) -> int:
     """Insert, or update the existing record for the same duel/day/player."""
     now = utc_now_iso()
+    meta_json = json.dumps(calculation_meta, ensure_ascii=False) if calculation_meta is not None else None
     existing = _find_existing_score(conn, duel_id, score_date, player_id, extracted_name)
     if existing is not None:
         sid = int(existing["id"])
@@ -380,19 +445,31 @@ def upsert_score(
             """
             UPDATE duel_scores
             SET extracted_name = ?, score = ?, source = ?,
-                screenshot_id = COALESCE(?, screenshot_id), updated_at = ?
+                screenshot_id = COALESCE(?, screenshot_id),
+                calculation_meta_json = ?, updated_at = ?
             WHERE id = ?
             """,
-            (extracted_name, score, source, screenshot_id, now, sid),
+            (extracted_name, score, source, screenshot_id, meta_json, now, sid),
         )
     else:
         cur = conn.execute(
             """
             INSERT INTO duel_scores (duel_id, player_id, extracted_name, score, score_date,
-                                     screenshot_id, source, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                     screenshot_id, source, calculation_meta_json, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (duel_id, player_id, extracted_name, score, score_date, screenshot_id, source, now, now),
+            (
+                duel_id,
+                player_id,
+                extracted_name,
+                score,
+                score_date,
+                screenshot_id,
+                source,
+                meta_json,
+                now,
+                now,
+            ),
         )
         sid = int(cur.lastrowid)
     if commit:
