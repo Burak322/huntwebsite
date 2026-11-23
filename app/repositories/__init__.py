@@ -1,0 +1,1 @@
+"""Veritabanı erişim (repository) katmanı."""
